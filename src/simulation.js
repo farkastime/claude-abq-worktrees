@@ -5,16 +5,20 @@
 //   Shark: { type: 'shark', breed, energy }
 // `breed` counts ticks survived since last breeding.
 
+// Defaults tuned for a watchable boom-bust arc: fish bloom, sharks swarm, then
+// the population collapses over ~100 ticks. Basic Wa-Tor is structurally
+// extinction-prone; coaxing it toward lasting coexistence is a good worktree
+// exercise (try tuning these, or change the movement rules in simulation.js).
 export const DEFAULTS = {
   width: 100,
   height: 60,
   cellSize: 6,
-  initialFish: 400,
-  initialSharks: 80,
-  fishBreed: 3,
-  sharkBreed: 10,
-  sharkStartEnergy: 5,
-  sharkEnergyGain: 4,
+  initialFish: 300,
+  initialSharks: 60,
+  fishBreed: 6,
+  sharkBreed: 20,
+  sharkStartEnergy: 12,
+  sharkEnergyGain: 6,
 };
 
 function sanitizeConfig(config = {}) {
@@ -50,7 +54,7 @@ export class Simulation {
   }
 
   _seed() {
-    const { width, height, initialFish, initialSharks, sharkStartEnergy } = this.config;
+    const { width, height, initialFish, initialSharks, fishBreed, sharkBreed, sharkStartEnergy } = this.config;
     const capacity = width * height;
     const empties = [];
     for (let i = 0; i < capacity; i++) empties.push(i);
@@ -58,12 +62,28 @@ export class Simulation {
     let cursor = 0;
     const fishToPlace = Math.min(initialFish, capacity);
     for (let n = 0; n < fishToPlace; n++) {
-      this.grid[empties[cursor++]] = { type: 'fish', breed: 0 };
+      // Randomize the initial breed timer so seeded creatures don't all breed on
+      // the same tick — synchronized cohorts cause boom/extinction collapse.
+      this.grid[empties[cursor++]] = {
+        type: 'fish',
+        breed: this._randInt(fishBreed),
+        dir: this._randInt(4),
+      };
     }
     const sharksToPlace = Math.min(initialSharks, capacity - fishToPlace);
     for (let n = 0; n < sharksToPlace; n++) {
-      this.grid[empties[cursor++]] = { type: 'shark', breed: 0, energy: sharkStartEnergy };
+      this.grid[empties[cursor++]] = {
+        type: 'shark',
+        breed: this._randInt(sharkBreed),
+        energy: sharkStartEnergy,
+        dir: this._randInt(4),
+      };
     }
+  }
+
+  // Random integer in [0, n).
+  _randInt(n) {
+    return Math.floor(this.rng() * n);
   }
 
   // Fisher–Yates shuffle in place using the injected rng.
@@ -98,7 +118,7 @@ export class Simulation {
     return { x: i % width, y: Math.floor(i / width) };
   }
 
-  // Returns neighbor indices (N/E/S/W) on the toroidal grid.
+  // Returns neighbor indices indexed by direction: [N, E, S, W].
   _neighbors(i) {
     const { x, y } = this._coords(i);
     return [
@@ -111,6 +131,17 @@ export class Simulation {
 
   _pick(arr) {
     return arr[Math.floor(this.rng() * arr.length)];
+  }
+
+  // Chooses a destination direction from `candidates` (array of {dir, index}),
+  // biased toward continuing the creature's current heading `dir`. Persistence
+  // creates coherent moving fronts and spatial refugia, which lets predator and
+  // prey populations coexist instead of mixing into one global boom/bust.
+  _chooseHeaded(candidates, dir) {
+    const PERSIST = 0.7; // probability of keeping heading when it's available
+    const straight = candidates.find((c) => c.dir === dir);
+    if (straight && this.rng() < PERSIST) return straight;
+    return this._pick(candidates);
   }
 
   step() {
@@ -138,14 +169,21 @@ export class Simulation {
 
   _stepFish(i, fish, acted, fishBreed) {
     fish.breed++;
-    const empties = this._neighbors(i).filter((n) => this.grid[n] === null);
+    const neighbors = this._neighbors(i);
+    const empties = [];
+    for (let dir = 0; dir < 4; dir++) {
+      if (this.grid[neighbors[dir]] === null) empties.push({ dir, index: neighbors[dir] });
+    }
     if (empties.length === 0) return; // nowhere to move; stays, keeps breed timer
-    const dest = this._pick(empties);
+    const choice = this._chooseHeaded(empties, fish.dir);
+    fish.dir = choice.dir;
+    const dest = choice.index;
     this.grid[dest] = fish;
     acted[dest] = true;
     if (fish.breed >= fishBreed) {
       fish.breed = 0;
-      this.grid[i] = { type: 'fish', breed: 0 }; // baby left behind
+      // Baby left behind inherits a fresh random heading.
+      this.grid[i] = { type: 'fish', breed: 0, dir: this._randInt(4) };
       acted[i] = true;
     } else {
       this.grid[i] = null;
@@ -161,24 +199,31 @@ export class Simulation {
       return;
     }
     const neighbors = this._neighbors(i);
-    const fishCells = neighbors.filter((n) => this.grid[n] && this.grid[n].type === 'fish');
-    const emptyCells = neighbors.filter((n) => this.grid[n] === null);
+    const fishCells = [];
+    const emptyCells = [];
+    for (let dir = 0; dir < 4; dir++) {
+      const cell = this.grid[neighbors[dir]];
+      if (cell && cell.type === 'fish') fishCells.push({ dir, index: neighbors[dir] });
+      else if (cell === null) emptyCells.push({ dir, index: neighbors[dir] });
+    }
 
-    let dest;
+    let choice;
     if (fishCells.length > 0) {
-      dest = this._pick(fishCells);
+      choice = this._chooseHeaded(fishCells, shark.dir); // hunt: nearest-heading fish
       shark.energy += sharkEnergyGain; // eat
     } else if (emptyCells.length > 0) {
-      dest = this._pick(emptyCells);
+      choice = this._chooseHeaded(emptyCells, shark.dir);
     } else {
       return; // boxed in; stays, energy decremented, breed ticked
     }
 
+    shark.dir = choice.dir;
+    const dest = choice.index;
     this.grid[dest] = shark;
     acted[dest] = true;
     if (shark.breed >= sharkBreed) {
       shark.breed = 0;
-      this.grid[i] = { type: 'shark', breed: 0, energy: sharkStartEnergy };
+      this.grid[i] = { type: 'shark', breed: 0, energy: sharkStartEnergy, dir: this._randInt(4) };
       acted[i] = true;
     } else {
       this.grid[i] = null;

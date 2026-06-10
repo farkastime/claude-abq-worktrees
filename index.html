@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wa-Tor — Predator &amp; Prey</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Wa-Tor</h1>
+      <p class="tagline">A toroidal predator–prey world. Watch the boom and bust.</p>
+    </header>
+
+    <main>
+      <section class="stage">
+        <canvas id="grid"></canvas>
+        <div class="readout">
+          <span>tick <strong id="readout-tick">0</strong></span>
+          <span class="fish">fish <strong id="readout-fish">0</strong></span>
+          <span class="shark">sharks <strong id="readout-sharks">0</strong></span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="buttons">
+          <button id="btn-play">Play</button>
+          <button id="btn-step">Step</button>
+          <button id="btn-reset">Reset</button>
+        </div>
+
+        <label class="speed">
+          Speed <span id="speed-value">10</span> ticks/s
+          <input id="speed" type="range" min="1" max="60" value="10" />
+        </label>
+
+        <fieldset>
+          <legend>Configuration (applies on Reset)</legend>
+          <label>Width <input id="cfg-width" type="number" value="100" min="1" /></label>
+          <label>Height <input id="cfg-height" type="number" value="60" min="1" /></label>
+          <label>Cell size <input id="cfg-cellSize" type="number" value="6" min="1" /></label>
+          <label>Initial fish <input id="cfg-initialFish" type="number" value="300" min="0" /></label>
+          <label>Initial sharks <input id="cfg-initialSharks" type="number" value="60" min="0" /></label>
+          <label>Fish breed <input id="cfg-fishBreed" type="number" value="6" min="1" /></label>
+          <label>Shark breed <input id="cfg-sharkBreed" type="number" value="20" min="1" /></label>
+          <label>Shark start energy <input id="cfg-sharkStartEnergy" type="number" value="12" min="1" /></label>
+          <label>Shark energy gain <input id="cfg-sharkEnergyGain" type="number" value="6" min="0" /></label>
+        </fieldset>
+      </section>
+    </main>
+
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>
