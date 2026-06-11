@@ -9,6 +9,12 @@ Watch spatial boom-and-bust dynamics emerge — and tune the parameters toward c
 Spin it up on multiple worktrees, edit different modules on different branches,
 run each on its own port, and practice merging.
 
+## Workshop
+
+Follow-along materials live in [`docs/tutorials/`](docs/tutorials/README.md):
+git worktrees → Claude worktrees → hooks, plus a Niri/Kitty/Neovim launcher in
+[`scripts/launch-worktree.sh`](scripts/launch-worktree.sh).
+
 ## Run it
 
 No build step. Serve the folder with any static server:
