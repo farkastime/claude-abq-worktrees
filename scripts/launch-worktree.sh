@@ -11,7 +11,12 @@ BASE_PORT="${BASE_PORT:-8000}"
 # workspace. `xdg-open` reuses an existing browser window on another workspace,
 # so it would silently land elsewhere — use a browser that takes --new-window.
 BROWSER_CMD="${BROWSER_CMD:-firefox --new-window}"
+# The server is launched as: $SERVER_CMD $SERVER_DIR_FLAG <dir> <port>
+# We pass the worktree dir EXPLICITLY rather than relying on the process cwd —
+# kitty session files don't reliably apply a working directory to `launch`
+# commands, so a cwd-based server would serve the repo root, not the worktree.
 SERVER_CMD="${SERVER_CMD:-python3 -m http.server}"
+SERVER_DIR_FLAG="${SERVER_DIR_FLAG:---directory}"
 EDITOR_CMD="${EDITOR_CMD:-nvim}"
 # -----------------------------------------------------------------------------
 
@@ -149,18 +154,20 @@ echo "worktree: $WT_DIR  branch: $BRANCH  port: $PORT" >&2
 
 # ---- build a Kitty session file: one window, three tabs ---------------------
 SESSION_FILE="$(mktemp -t wt-kitty-XXXX.session)"
+# Set each tab's working directory with `--cwd` for the interactive tabs (nvim,
+# claude). For the server we ALSO pass the directory explicitly via
+# $SERVER_DIR_FLAG, because kitty session files don't reliably apply a working
+# directory to `launch` commands — without the explicit flag the server serves
+# the repo root instead of this worktree.
 SESSION_CONTENT="$(cat <<EOF
 new_tab nvim
-cd $WT_DIR
-launch --title nvim $EDITOR_CMD
+launch --title nvim --cwd $WT_DIR $EDITOR_CMD
 
 new_tab claude
-cd $WT_DIR
-launch --title claude claude --name $NAME
+launch --title claude --cwd $WT_DIR claude --name $NAME
 
 new_tab server
-cd $WT_DIR
-launch --title server $SERVER_CMD $PORT
+launch --title server --cwd $WT_DIR $SERVER_CMD $SERVER_DIR_FLAG $WT_DIR $PORT
 EOF
 )"
 printf '%s\n' "$SESSION_CONTENT" >"$SESSION_FILE"
