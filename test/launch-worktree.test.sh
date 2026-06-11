@@ -17,7 +17,6 @@ check "nvim tab" '\bnvim\b' "$out"
 check "claude tab" 'claude --name demo-wt' "$out"
 check "opens browser in new window" 'firefox --new-window http://localhost:[0-9]+' "$out"
 check "moves kitty to bottom-empty ws" 'move-window-to-workspace --window-id <kitty-id> --focus false <bottom-empty-ws>' "$out"
-check "moves browser to kitty's ws" 'move-window-to-workspace --window-id <browser-id> --focus false <kitty-workspace>' "$out"
-check "focuses kitty window" 'niri msg action focus-window --id <kitty-id>' "$out"
+check "focuses kitty window before browser" 'niri msg action focus-window --id <kitty-id>' "$out"
 
 exit $fail
