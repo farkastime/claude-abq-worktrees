@@ -34,17 +34,36 @@ run() {
 }
 
 # ---- niri helpers -----------------------------------------------------------
-# Print the 1-based idx of the focused workspace (empty if niri/no focus).
-niri_focused_ws_idx() {
-  niri msg --json workspaces 2>/dev/null | python3 -c '
+# Print the id of the workspace to place the new worktree on: the bottom-most
+# EMPTY workspace on the focused output. Niri keeps a trailing empty workspace
+# per monitor, and renumbers idx dynamically — so we target by stable id, not
+# idx, and pick the last empty one. This way each successive worktree lands on
+# its own fresh empty workspace below the previous, instead of piling onto it.
+niri_target_ws_id() {
+  { niri msg --json workspaces 2>/dev/null; echo "---SPLIT---"; niri msg --json windows 2>/dev/null; } \
+    | python3 -c '
 import sys, json
+raw = sys.stdin.read()
 try:
-    ws = json.load(sys.stdin)
+    ws_raw, win_raw = raw.split("---SPLIT---")
+    ws = json.loads(ws_raw)
+    wins = json.loads(win_raw)
 except Exception:
     sys.exit(0)
-for w in ws:
-    if w.get("is_focused"):
-        print(w.get("idx", "")); break
+
+focused = next((w for w in ws if w.get("is_focused")), None)
+if not focused:
+    sys.exit(0)
+output = focused.get("output")
+
+occupied = {w.get("workspace_id") for w in wins}
+# Workspaces on the focused output, in display order (top to bottom).
+same = [w for w in ws if w.get("output") == output]
+same.sort(key=lambda w: w.get("idx", 0))
+# The bottom-most empty workspace on this output is our target.
+empties = [w for w in same if w.get("id") not in occupied]
+if empties:
+    print(empties[-1].get("id"))
 '
 }
 
@@ -84,9 +103,23 @@ wait_window_for_pid() {
   return 1
 }
 
-# Move window id $1 to workspace idx $2 without stealing focus.
+# Move window id $1 to workspace reference $2 without stealing focus.
 niri_move_window_to_ws() {
   run niri msg action move-window-to-workspace --window-id "$1" --focus false "$2"
+}
+
+# Print the workspace_id that window id $1 currently lives on (empty if none).
+niri_ws_of_window() {
+  niri msg --json windows 2>/dev/null | python3 -c '
+import sys, json
+wid = int(sys.argv[1])
+try:
+    for w in json.load(sys.stdin):
+        if w.get("id") == wid:
+            print(w.get("workspace_id", "")); break
+except Exception:
+    pass
+' "$1"
 }
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -153,16 +186,20 @@ printf '%s\n' "$SESSION_CONTENT" >"$SESSION_FILE"
 HAVE_NIRI=0
 if command -v niri >/dev/null 2>&1; then HAVE_NIRI=1; fi
 
-# Target workspace = the empty one just below the currently focused workspace.
-TARGET_WS=""
-if [[ "$DRY_RUN" == 1 ]]; then
-  TARGET_WS="<below>"   # placeholder so dry-run shows the placement commands
-elif [[ "$HAVE_NIRI" == 1 ]]; then
-  cur_idx="$(niri_focused_ws_idx)"
-  [[ -n "$cur_idx" ]] && TARGET_WS=$((cur_idx + 1))
-fi
+# Placement strategy (Niri dynamic workspaces):
+#   1. Launch Kitty; find its window id by pid.
+#   2. Move Kitty to the bottom EMPTY workspace on the focused output, read
+#      FRESH by stable id right before the move (stale numeric refs are
+#      unreliable once a workspace is emptied and garbage-collected).
+#   3. Launch the browser; find its new window by id-diff.
+#   4. Move the browser onto whatever workspace Kitty now occupies (read fresh),
+#      so the two stay together even though step 2 spawned a new empty below.
+#   5. Focus the Kitty window — focusing by window id reliably switches to its
+#      workspace (numeric focus-workspace refs are not dependable here).
+# Each successive worktree thus lands on its own fresh empty workspace below the
+# previous one, instead of piling onto it.
 
-# ---- launch the Kitty window, then move it to the target workspace -----------
+# ---- launch the Kitty window ------------------------------------------------
 KITTY_PID=""
 if command -v kitty >/dev/null 2>&1; then
   if [[ "$DRY_RUN" == 1 ]]; then
@@ -175,35 +212,41 @@ else
   echo "warn: kitty not found; skipping terminal launch" >&2
 fi
 
+KID=""
 if [[ "$DRY_RUN" == 1 ]]; then
-  niri_move_window_to_ws "<kitty-id>" "$TARGET_WS"
-elif [[ "$HAVE_NIRI" == 1 && -n "$TARGET_WS" && -n "$KITTY_PID" ]]; then
-  kid="$(wait_window_for_pid "$KITTY_PID" || true)"
-  [[ -n "$kid" ]] && niri_move_window_to_ws "$kid" "$TARGET_WS"
+  niri_move_window_to_ws "<kitty-id>" "<bottom-empty-ws>"
+elif [[ "$HAVE_NIRI" == 1 && -n "$KITTY_PID" ]]; then
+  KID="$(wait_window_for_pid "$KITTY_PID" || true)"
+  target="$(niri_target_ws_id)"
+  [[ -n "$KID" && -n "$target" ]] && niri_move_window_to_ws "$KID" "$target"
 fi
 
-# ---- open the app in its own browser window, then move it too ---------------
-# Snapshot window ids so we can find the newly-created browser window.
+# ---- open the app in its own browser window ---------------------------------
 ids_before=""
 [[ "$HAVE_NIRI" == 1 && "$DRY_RUN" != 1 ]] && ids_before="$(niri_window_ids)"
 
 run $BROWSER_CMD "http://localhost:$PORT"
 
 if [[ "$DRY_RUN" == 1 ]]; then
-  niri_move_window_to_ws "<browser-id>" "$TARGET_WS"
-elif [[ "$HAVE_NIRI" == 1 && -n "$TARGET_WS" ]]; then
+  niri_move_window_to_ws "<browser-id>" "<kitty-workspace>"
+elif [[ "$HAVE_NIRI" == 1 ]]; then
   bid=""; tries=0
   while [[ $tries -lt 40 ]]; do
     bid="$(comm -13 <(printf '%s\n' "$ids_before" | sort) <(niri_window_ids | sort) | head -n1)"
     [[ -n "$bid" ]] && break
     sleep 0.1; tries=$((tries + 1))
   done
-  [[ -n "$bid" ]] && niri_move_window_to_ws "$bid" "$TARGET_WS"
+  # Put the browser on whatever workspace Kitty ended up on (read fresh).
+  kitty_ws=""
+  [[ -n "$KID" ]] && kitty_ws="$(niri_ws_of_window "$KID")"
+  [[ -n "$bid" && -n "$kitty_ws" ]] && niri_move_window_to_ws "$bid" "$kitty_ws"
 fi
 
-# ---- finally, focus the target workspace so you land on the new setup --------
-if [[ "$HAVE_NIRI" == 1 && -n "$TARGET_WS" ]]; then
-  run niri msg action focus-workspace "$TARGET_WS"
+# ---- finally, focus the Kitty window so you land on the new setup ------------
+if [[ "$DRY_RUN" == 1 ]]; then
+  run niri msg action focus-window --id "<kitty-id>"
+elif [[ "$HAVE_NIRI" == 1 && -n "$KID" ]]; then
+  run niri msg action focus-window --id "$KID"
 elif [[ "$HAVE_NIRI" != 1 ]]; then
   echo "warn: niri not found; skipping workspace placement" >&2
 fi
