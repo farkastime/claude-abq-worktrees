@@ -32,6 +32,34 @@ work), set in `settings.json`:
 
 (`"fresh"` is the default; `"head"` uses local HEAD.)
 
+## Copying gitignored files into the worktree
+
+A worktree is a **fresh checkout**, so untracked/gitignored files — `.env`,
+`.env.local`, local config, etc. — are **not** present. Your app may break in the
+worktree because its secrets or local settings are missing.
+
+Claude Code can copy them in automatically. Add a **`.worktreeinclude`** file to
+your project root, listing the files to copy in `.gitignore` syntax:
+
+```gitignore
+# .worktreeinclude
+.env
+.env.local
+config/secrets.json
+```
+
+When Claude creates a worktree (`claude --worktree`, subagent worktrees, desktop
+parallel sessions), any file that matches a pattern **and** is gitignored gets
+copied from the main checkout into the new worktree. Tracked files are never
+duplicated.
+
+> **This is a Claude Code feature, not git.** Plain `git worktree add` (tutorial 1)
+> does **not** read `.worktreeinclude` — only Claude-created worktrees do.
+>
+> **Heads up for hooks:** if you register a `WorktreeCreate` hook (tutorial 3),
+> it *replaces* Claude's default creation, so `.worktreeinclude` is **no longer
+> processed** — your hook must copy those files itself.
+
 ## Opening more terminals in a worktree
 
 The worktree is a normal directory. Open as many extra terminals as you like:
